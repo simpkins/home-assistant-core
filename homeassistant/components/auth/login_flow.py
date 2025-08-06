@@ -345,7 +345,7 @@ class LoginFlowResourceView(LoginFlowBaseView):
     url = "/auth/login_flow/{flow_id}"
     name = "api:auth:login_flow:resource"
 
-    async def get(self, request: web.Request) -> web.Response:
+    async def get(self, request: web.Request, flow_id: str) -> web.Response:
         """Do not allow getting status of a flow in progress."""
         return self.json_message("Invalid flow specified", HTTPStatus.NOT_FOUND)
 
