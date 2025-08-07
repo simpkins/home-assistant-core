@@ -239,7 +239,6 @@ class LoginFlowBaseView(HomeAssistantView):
     async def _async_flow_result_to_response(
         self,
         request: web.Request,
-        client_id: str,
         result: AuthFlowResult,
     ) -> web.Response:
         """Convert the flow result to a response."""
@@ -260,13 +259,9 @@ class LoginFlowBaseView(HomeAssistantView):
 
         hass = request.app[KEY_HASS]
 
-        if not await indieauth.verify_redirect_uri(
-            hass, client_id, result["context"]["redirect_uri"]
-        ):
-            return self.json_message("Invalid redirect URI", HTTPStatus.FORBIDDEN)
-
         result.pop("data")
-        result.pop("context")
+        context = result.pop("context")
+        client_id = context["client_id"]
 
         result_obj: Credentials = result.pop("result")
 
@@ -304,6 +299,7 @@ class LoginFlowIndexView(LoginFlowBaseView):
                     [vol.Any(str, None)], vol.Length(2, 2), vol.Coerce(tuple)
                 ),
                 vol.Required("redirect_uri"): str,
+                vol.Optional("oauth_state"): str,
                 vol.Optional("type", default="authorize"): str,
             }
         )
@@ -313,9 +309,14 @@ class LoginFlowIndexView(LoginFlowBaseView):
         """Create a new login flow."""
         client_id: str = data["client_id"]
         redirect_uri: str = data["redirect_uri"]
+        oauth_state: str | None = data.get("oauth_state")
 
         if not indieauth.verify_client_id(client_id):
             return self.json_message("Invalid client id", HTTPStatus.BAD_REQUEST)
+
+        hass = request.app[KEY_HASS]
+        if not await indieauth.verify_redirect_uri(hass, client_id, redirect_uri):
+            return self.json_message("Invalid redirect URI", HTTPStatus.FORBIDDEN)
 
         handler: tuple[str, str] = tuple(data["handler"])
 
@@ -326,6 +327,8 @@ class LoginFlowIndexView(LoginFlowBaseView):
                     ip_address=ip_address(request.remote),  # type: ignore[arg-type]
                     credential_only=data.get("type") == "link_user",
                     redirect_uri=redirect_uri,
+                    client_id=client_id,
+                    oauth_state=oauth_state,
                 ),
             )
         except data_entry_flow.UnknownHandler:
@@ -335,7 +338,7 @@ class LoginFlowIndexView(LoginFlowBaseView):
                 "Handler does not support init", HTTPStatus.BAD_REQUEST
             )
 
-        return await self._async_flow_result_to_response(request, client_id, result)
+        return await self._async_flow_result_to_response(request, result)
 
 
 class LoginFlowResourceView(LoginFlowBaseView):
@@ -350,7 +353,7 @@ class LoginFlowResourceView(LoginFlowBaseView):
 
     @RequestDataValidator(
         vol.Schema(
-            {vol.Required("client_id"): str},
+            {vol.Optional("client_id"): str},
             extra=vol.ALLOW_EXTRA,
         )
     )
@@ -359,23 +362,22 @@ class LoginFlowResourceView(LoginFlowBaseView):
         self, request: web.Request, data: dict[str, Any], flow_id: str
     ) -> web.Response:
         """Handle progressing a login flow request."""
-        client_id: str = data.pop("client_id")
-
-        if not indieauth.verify_client_id(client_id):
-            return self.json_message("Invalid client id", HTTPStatus.BAD_REQUEST)
+        client_id: str | None = data.pop("client_id", None)
 
         try:
             # do not allow change ip during login flow
             flow = self._flow_mgr.async_get(flow_id)
             if flow["context"]["ip_address"] != ip_address(request.remote):  # type: ignore[arg-type]
                 return self.json_message("IP address changed", HTTPStatus.BAD_REQUEST)
+            if client_id is not None and flow["context"]["client_id"] != client_id:
+                return self.json_message("Client ID changed", HTTPStatus.BAD_REQUEST)
             result = await self._flow_mgr.async_configure(flow_id, data)
         except data_entry_flow.UnknownFlow:
             return self.json_message("Invalid flow specified", HTTPStatus.NOT_FOUND)
         except vol.Invalid:
             return self.json_message("User input malformed", HTTPStatus.BAD_REQUEST)
 
-        return await self._async_flow_result_to_response(request, client_id, result)
+        return await self._async_flow_result_to_response(request, result)
 
     async def delete(self, request: web.Request, flow_id: str) -> web.Response:
         """Cancel a flow in progress."""

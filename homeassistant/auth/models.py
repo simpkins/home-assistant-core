@@ -31,6 +31,8 @@ class AuthFlowContext(FlowContext, total=False):
     credential_only: bool
     ip_address: IPv4Address | IPv6Address
     redirect_uri: str
+    client_id: str
+    oauth_state: str | None
 
 
 AuthFlowResult = FlowResult[AuthFlowContext, tuple[str, str]]
