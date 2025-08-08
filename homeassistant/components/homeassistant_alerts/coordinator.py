@@ -45,7 +45,8 @@ class AlertUpdateCoordinator(DataUpdateCoordinator[dict[str, IntegrationAlert]])
             update_interval=UPDATE_INTERVAL,
         )
         self.ha_version = AwesomeVersion(
-            __version__,
+            # Strip off any PEP440 local version identifier
+            __version__.split("+", 1)[0],
             ensure_strategy=AwesomeVersionStrategy.CALVER,
         )
         self.supervisor = is_hassio(self.hass)
